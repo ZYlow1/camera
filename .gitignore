@@ -10,3 +10,10 @@ captures/
 # ---- Python 运行时缓存 ----
 __pycache__/
 *.py[cod]
+
+# ---- 深度学习模型权重（几百 MB 起，体积大且可重新下载，绝不进仓库）----
+models/
+*.safetensors
+*.onnx
+*.pt
+*.pth
