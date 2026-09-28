@@ -1,0 +1,19 @@
+# 依赖清单（版本为开发环境实测通过的版本，写在注释里供参考）
+#
+# 安装：
+#   pip install -r requirements.txt
+#
+# 注意：transformers 与 torch 有兼容性关系。如果你在别的项目里也用 transformers，
+# 升级/降级前先确认不会影响那些项目。
+
+opencv-python        # 4.12.0.88 —— 摄像头读写、图像处理
+numpy                # 2.5.1
+
+# 深度估计与目标检测都通过 transformers 调用
+transformers         # 5.14.1
+
+# ⚠️ torch 必须装 CUDA 版！
+# 普通的 `pip install torch` 装到的是 CPU 版，跑深度模型会慢到个位数 FPS。
+# 请到 https://pytorch.org/get-started/locally/ 按你的显卡和系统选择安装命令，
+# 开发环境使用的是 torch 2.6.0+cu124。
+torch
