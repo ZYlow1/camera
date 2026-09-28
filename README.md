@@ -113,6 +113,7 @@ camera-test.py            摄像头预览/调试工具（不依赖 GPU 和模型
 obstacle_detect.py        避障识别主程序：深度估计 + 判定 + 可视化
 requirements.txt          依赖清单
 docs/.../specs/           设计文档（方案选择、实测数据、已知限制、待决问题）
+docs/避障识别可行性说明.md  面向项目汇报的可行性说明（实测数据 + 经费依据）
 captures/                 截图输出目录（已 gitignore）
 ```
 
