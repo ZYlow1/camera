@@ -70,3 +70,140 @@ def detect_zones(prev_gray, gray, diff_threshold=DIFF_THRESHOLD):
         zone = mask[:, x0:x1]
         ratios.append(float(np.count_nonzero(zone)) / zone.size)
     return ratios, mask
+
+
+def open_camera(index=0):
+    """打开摄像头。
+
+    Windows 上优先用 MSMF 后端——实测本机摄像头在 1280x720 下 MSMF 有 30 帧，
+    而 DSHOW 只有 10 帧。MSMF 打不开时再依次退回 DSHOW 和默认后端。
+    """
+    cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(index)
+    return cap
+
+
+def side_name(i):
+    """把分区编号翻译成中文，方便打印。三分区时就是 左 / 中 / 右。"""
+    names = ["左", "中", "右"]
+    return names[i] if i < len(names) else f"第{i}区"
+
+
+def main():
+    cap = open_camera(0)
+    if not cap.isOpened():
+        print("摄像头打不开。检查是否被其他软件占用，或试试 open_camera(1)")
+        return
+
+    # 请求分辨率，并把实际生效的值打印出来（摄像头可能不接受我们请求的尺寸）
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+    real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"实际分辨率：{real_w}x{real_h}（请求的是 {WIDTH}x{HEIGHT}）")
+
+    print("按键说明：q 退出 / + - 调变化阈值 / d 调试图 / m 镜像")
+    print(f"分区数：{ZONES}    变化阈值：{DIFF_THRESHOLD}    连续 {CONFIRM_FRAMES} 帧确认")
+
+    mirror = True                  # 自拍镜像，看着更自然
+    show_debug = False             # 是否显示二值调试图
+    diff_threshold = DIFF_THRESHOLD
+    prev_gray = None               # 上一帧灰度图
+    hit_counts = [0] * ZONES       # 每个区连续命中了几帧
+    confirmed = [False] * ZONES    # 每个区是否已确认「有障碍」
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("读不到画面")
+            break
+
+        if mirror:
+            frame = cv2.flip(frame, 1)
+
+        # 识别只需要灰度信息，彩色转灰度能省一半计算量
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # 第一帧没有「上一帧」可比，先存下来，这一帧不做判断
+        if prev_gray is None:
+            prev_gray = gray
+            continue
+
+        ratios, mask = detect_zones(prev_gray, gray, diff_threshold)
+        prev_gray = gray
+
+        # 全画面变化过大 → 多半是开/关灯、窗帘被吹动之类的整体变化，这一帧整帧作废
+        global_ratio = float(np.count_nonzero(mask)) / mask.size
+        if global_ratio > GLOBAL_CHANGE_RATIO:
+            hit_counts = [0] * ZONES
+            confirmed = [False] * ZONES
+        else:
+            for i in range(ZONES):
+                # 命中就累加计数，没命中就归零——连续命中够多才确认，避免状态乱跳
+                if ratios[i] > MIN_PIXELS_RATIO:
+                    hit_counts[i] += 1
+                else:
+                    hit_counts[i] = 0
+                was = confirmed[i]
+                confirmed[i] = hit_counts[i] >= CONFIRM_FRAMES
+                # 只在状态发生变化时打印，否则会刷屏
+                if confirmed[i] != was:
+                    print(f"{side_name(i)}区：{'有障碍' if confirmed[i] else '无障碍'}")
+
+        # 调试图直接看二值掩码，正常图看原始画面
+        if show_debug:
+            display = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        else:
+            display = frame.copy()
+
+        # 给每个分区画一条状态色条：绿=无障碍，黄=本帧命中，红=已确认有障碍
+        h, w = display.shape[:2]
+        for i in range(ZONES):
+            x0 = w * i // ZONES
+            x1 = w * (i + 1) // ZONES
+            if confirmed[i]:
+                color = (0, 0, 255)
+            elif hit_counts[i] > 0:
+                color = (0, 255, 255)
+            else:
+                color = (0, 255, 0)
+            cv2.rectangle(display, (x0, 0), (x1 - 1, 8), color, -1)
+            cv2.line(display, (x0, 0), (x0, h), color, 1)
+        cv2.line(display, (w - 1, 0), (w - 1, h), color, 1)
+
+        # 左上角显示当前设置，方便边调边看
+        cv2.putText(
+            display,
+            f"threshold:{diff_threshold}  zones:{ZONES}  debug:{int(show_debug)}",
+            (10, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 255),
+            2,
+        )
+
+        cv2.imshow("obstacle", display)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key in (ord('+'), ord('=')):       # 「+」要按 shift，实际常收到「=」
+            diff_threshold = min(255, diff_threshold + 5)
+            print("变化阈值 =", diff_threshold)
+        elif key in (ord('-'), ord('_')):
+            diff_threshold = max(1, diff_threshold - 5)
+            print("变化阈值 =", diff_threshold)
+        elif key == ord('d'):
+            show_debug = not show_debug
+        elif key == ord('m'):
+            mirror = not mirror
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
