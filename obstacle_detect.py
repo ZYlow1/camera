@@ -16,6 +16,8 @@
     q    退出
     +    提高变化阈值（更迟钝，更不容易误报）
     -    降低变化阈值（更灵敏）
+    [    降低最小占比（更灵敏，更容易检出小动静）
+    ]    提高最小占比（更迟钝，更能压住噪声误报）
     d    切换调试图（看清算法到底「看到」了什么）
     m    开关镜像
 """
@@ -33,7 +35,11 @@ DIFF_THRESHOLD = 25         # 两帧差值多大才算「变化」（0~255）。
 
 BLUR_KERNEL = 5             # 高斯模糊的核大小，必须是奇数。作用：抹掉传感器噪点
 
-MIN_PIXELS_RATIO = 0.02     # 某一区内「变化像素占比」超过多少，才算这一区有障碍
+MIN_PIXELS_RATIO = 0.03     # 某一区内「变化像素占比」超过多少，才算这一区有障碍。
+                            # 实测：画面静止时噪声占比在 0.002~0.026 之间波动（随光照变化），
+                            # 所以拿 0.03 作起点——牺牲一点灵敏度来压住噪声。
+                            # 另：避障通常「宁可误报，不可漏报」，发现漏检就按 [ 调低。
+                            # ⚠ 这个值必须你在自己的场景里标定——画面上的实时占比就是依据。
 
 CONFIRM_FRAMES = 3          # 连续命中多少帧才确认（防抖，避免状态疯狂跳动）
 
@@ -105,11 +111,12 @@ def main():
     real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"实际分辨率：{real_w}x{real_h}（请求的是 {WIDTH}x{HEIGHT}）")
 
-    print("按键说明：q 退出 / + - 调变化阈值 / d 调试图 / m 镜像")
+    print("按键说明：q 退出 / + - 调变化阈值 / [ ] 调最小占比 / d 调试图 / m 镜像")
     print(f"分区数：{ZONES}    变化阈值：{DIFF_THRESHOLD}    连续 {CONFIRM_FRAMES} 帧确认")
 
     mirror = True                  # 自拍镜像，看着更自然
     show_debug = False             # 是否显示二值调试图
+    min_ratio = MIN_PIXELS_RATIO   # 判定阈值，运行时可用 [ ] 现场调整
     diff_threshold = DIFF_THRESHOLD
     prev_gray = None               # 上一帧灰度图
     hit_counts = [0] * ZONES       # 每个区连续命中了几帧
@@ -143,7 +150,7 @@ def main():
         else:
             for i in range(ZONES):
                 # 命中就累加计数，没命中就归零——连续命中够多才确认，避免状态乱跳
-                if ratios[i] > MIN_PIXELS_RATIO:
+                if ratios[i] > min_ratio:
                     hit_counts[i] += 1
                 else:
                     hit_counts[i] = 0
@@ -177,13 +184,19 @@ def main():
         # 左上角显示当前设置，方便边调边看
         cv2.putText(
             display,
-            f"threshold:{diff_threshold}  zones:{ZONES}  debug:{int(show_debug)}",
+            f"thr:{diff_threshold}  min:{min_ratio:.3f}  zones:{ZONES}  debug:{int(show_debug)}",
             (10, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (0, 0, 255),
             2,
         )
+
+        # 把每一区的实时占比写在画面上——这是现场标定阈值最重要的依据：
+        # 画面静止时这些数字就是「噪声水平」，判定阈值（min）必须明显高于它。
+        zone_text = "  ".join(f"{side_name(i)}:{ratios[i]:.3f}" for i in range(ZONES))
+        cv2.putText(display, zone_text, (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
 
         cv2.imshow("obstacle", display)
 
@@ -196,6 +209,12 @@ def main():
         elif key in (ord('-'), ord('_')):
             diff_threshold = max(1, diff_threshold - 5)
             print("变化阈值 =", diff_threshold)
+        elif key in (ord('['), ord('{')):
+            min_ratio = max(0.001, round(min_ratio - 0.005, 4))
+            print("最小占比 =", min_ratio)
+        elif key in (ord(']'), ord('}')):
+            min_ratio = min(0.5, round(min_ratio + 0.005, 4))
+            print("最小占比 =", min_ratio)
         elif key == ord('d'):
             show_debug = not show_debug
         elif key == ord('m'):
